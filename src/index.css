@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+
+  /* Redefine Amber palette as Vibrant Orange/Gold Palette to inject the theme globally */
+  --color-amber-50: #fffbf7;
+  --color-amber-100: #ffedd5;
+  --color-amber-200: #fed7aa;
+  --color-amber-300: #fdba74;
+  --color-amber-400: #fb923c;
+  --color-amber-500: #f97316;
+  --color-amber-600: #ea580c;
+  --color-amber-700: #c2410c;
+  --color-amber-800: #9a3412;
+  --color-amber-900: #7c2d12;
+  --color-amber-950: #431407;
+
+  /* Configure organic shadows from the Vibrant Palette HTML */
+  --shadow-sm: 0 2px 8px rgba(249, 115, 22, 0.04);
+  --shadow-md: 0 8px 30px rgba(249, 115, 22, 0.08);
+  --shadow-lg: 0 15px 45px rgba(249, 115, 22, 0.12);
+  --shadow-xl: 0 20px 50px rgba(249, 115, 22, 0.15);
+  --shadow-2xl: 0 25px 60px rgba(249, 115, 22, 0.2);
+}
+
+/* Custom visual refinements to reflect Vibrant Palette backdrop */
+body {
+  background-color: #fffaf5;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(254, 215, 170, 0.1) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(253, 186, 116, 0.08) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(254, 215, 170, 0.05) 0px, transparent 50%);
+  background-attachment: fixed;
+  font-family: var(--font-sans);
+}
+
+/* Rounded component card styles as instructed */
+.vibrant-card {
+  border-radius: 24px;
+  background-color: #ffffff;
+  border: 1px solid rgba(249, 115, 22, 0.08);
+  box-shadow: var(--shadow-md);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.vibrant-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+  border-color: rgba(249, 115, 22, 0.15);
+}
+
+.rounded-super {
+  border-radius: 32px;
+}
+
+.rounded-mega {
+  border-radius: 40px;
+}

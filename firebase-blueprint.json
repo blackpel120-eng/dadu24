@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "FoodItem": {
+      "title": "FoodItem",
+      "description": "Represents a food dish from the restaurant menu.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the food item" },
+        "price": { "type": "number", "description": "Price in PKR (Rs)" },
+        "description": { "type": "string", "description": "Description of ingredients and serving info" },
+        "category": { "type": "string", "description": "The menu category (e.g., Biryani, Fast Food)" },
+        "imageUrl": { "type": "string", "description": "URL to food item image" },
+        "isAvailable": { "type": "boolean", "description": "Availability status of the item" }
+      },
+      "required": ["name", "price", "description", "category", "imageUrl", "isAvailable"]
+    },
+    "ElectricianService": {
+      "title": "ElectricianService",
+      "description": "Represents a electrical trade repair service that can be booked.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the electrician service" },
+        "basePrice": { "type": "number", "description": "Service charge base in PKR (Rs)" },
+        "description": { "type": "string", "description": "Description of the job coverage" },
+        "category": { "type": "string", "description": "The category of electrical work (e.g., AC, Fans)" },
+        "imageUrl": { "type": "string", "description": "URL to service visual image" },
+        "isAvailable": { "type": "boolean", "description": "Service availability status" }
+      },
+      "required": ["name", "basePrice", "description", "category", "imageUrl", "isAvailable"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Represents a customer's order for food or electrician trade services.",
+      "type": "object",
+      "properties": {
+        "customerName": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "deliveryAddress": { "type": "string" },
+        "nearestLandmark": { "type": "string" },
+        "riderNotes": { "type": "string" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "cooking", "riding", "completed", "cancelled"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerName", "phoneNumber", "deliveryAddress", "totalAmount", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "food_items": {
+      "schema": "FoodItem",
+      "description": "The restaurant food menu items available for order."
+    },
+    "electrician_services": {
+      "schema": "ElectricianService",
+      "description": "The tradesperson electrical services available for booking."
+    },
+    "orders": {
+      "schema": "Order",
+      "description": "The customer orders containing item lists and status tracker."
+    }
+  }
+}

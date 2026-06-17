@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reuseable, hardened primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true &&
+        request.auth.token.email == 'blackpel120@gmail.com'
+      );
+    }
+
+    function hasOnlyFoodKeys(data) {
+      return data.keys().hasAll(['name', 'price', 'description', 'category', 'imageUrl', 'isAvailable'])
+        && data.keys().size() == 6;
+    }
+
+    function isValidFoodItem(data) {
+      return data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.price is number && data.price >= 1 && data.price <= 50000
+        && data.description is string && data.description.size() >= 1 && data.description.size() <= 1000
+        && data.category is string && (data.category == 'Biryani' || data.category == 'Desi Salan' || data.category == 'Fast Food' || data.category == 'Desi Fast Food' || data.category == 'Sweets' || data.category == 'Beverages')
+        && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 1000
+        && data.isAvailable is bool;
+    }
+
+    function hasOnlyServiceKeys(data) {
+      return data.keys().hasAll(['name', 'basePrice', 'description', 'category', 'imageUrl', 'isAvailable'])
+        && data.keys().size() == 6;
+    }
+
+    function isValidElectricianService(data) {
+      return data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.basePrice is number && data.basePrice >= 1 && data.basePrice <= 50000
+        && data.description is string && data.description.size() >= 1 && data.description.size() <= 1000
+        && data.category is string && (data.category == 'AC & Cooling' || data.category == 'Fans & Lighting' || data.category == 'UPS & Backup' || data.category == 'House Wiring' || data.category == 'Appliances Repair')
+        && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 1000
+        && data.isAvailable is bool;
+    }
+
+    function hasRequiredOrderKeys(data) {
+      return data.keys().hasAll(['customerName', 'phoneNumber', 'deliveryAddress', 'items', 'totalAmount', 'status', 'createdAt', 'paymentMethod']);
+    }
+
+    function isValidOrder(data) {
+      return hasRequiredOrderKeys(data)
+        && data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 100
+        && data.phoneNumber is string && data.phoneNumber.size() >= 3 && data.phoneNumber.size() <= 40
+        && data.deliveryAddress is string && data.deliveryAddress.size() >= 3 && data.deliveryAddress.size() <= 500
+        && data.totalAmount is number && data.totalAmount > 0 && data.totalAmount < 100000
+        && data.status is string && (data.status == 'Pending' || data.status == 'Accepted' || data.status == 'Preparing' || data.status == 'Out for Delivery' || data.status == 'Completed' || data.status == 'Cancelled')
+        && data.createdAt is string && data.createdAt.size() <= 100
+        && data.paymentMethod == 'Cash on Delivery'
+        && (!('nearestLandmark' in data) || (data.nearestLandmark is string && data.nearestLandmark.size() <= 500))
+        && (!('orderNotes' in data) || (data.orderNotes is string && data.orderNotes.size() <= 500))
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 100;
+    }
+
+    match /food_items/{itemId} {
+      allow read: if true;
+      allow create: if isAdmin() && hasOnlyFoodKeys(request.resource.data) && isValidFoodItem(request.resource.data);
+      allow update: if isAdmin() && isValidFoodItem(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /electrician_services/{serviceId} {
+      allow read: if true;
+      allow create: if isAdmin() && hasOnlyServiceKeys(request.resource.data) && isValidElectricianService(request.resource.data);
+      allow update: if isAdmin() && isValidElectricianService(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create: if isValidOrder(request.resource.data) && request.resource.data.status == 'Pending';
+      allow update: if isAdmin() && isValidOrder(request.resource.data) && (resource.data.status != 'Completed' && resource.data.status != 'Cancelled');
+      allow delete: if isAdmin();
+    }
+  }
+}

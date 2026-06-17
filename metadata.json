@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Dadu 24#7",
+  "description": "Premium 24/7 Food Delivery and Professional Electrician Services in Dadu City, with complete cash on delivery (COD) and real-time admin order dispatch management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
