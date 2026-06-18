@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FoodItem, ElectricianService, Order, OrderStatus } from '../types';
+import { FoodItem, ElectricianService, Order, OrderStatus, RegisteredUser } from '../types';
 import { 
   Plus, 
   Trash2, 
@@ -30,7 +30,13 @@ import {
   updateOrderStatus,
   subscribeToFoods,
   subscribeToServices,
-  subscribeToOrders
+  subscribeToOrders,
+  subscribeToRegisteredUsers,
+  seedDatabaseIfEmpty,
+  PRESET_FOODS,
+  PRESET_SERVICES,
+  updateDeliveryFee,
+  subscribeToDeliveryFee
 } from '../lib/firebase';
 
 // Beautiful ready-to-use Preset Image Suggestion lists to make inputs extremely fast was requested
@@ -57,8 +63,19 @@ export default function AdminPanel() {
   const [foods, setFoods] = useState<FoodItem[]>([]);
   const [services, setServices] = useState<ElectricianService[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [registeredUsers, setRegisteredUsers] = useState<RegisteredUser[]>([]);
 
-  const [activeFormTab, setActiveFormTab] = useState<'orders' | 'manage_foods' | 'manage_services'>('orders');
+  const [activeFormTab, setActiveFormTab] = useState<'orders' | 'manage_foods' | 'manage_services' | 'customers' | 'settings'>('orders');
+
+  // Delivery Setting State
+  const [adminDeliveryFee, setAdminDeliveryFee] = useState<string>('60');
+  const [updatingFee, setUpdatingFee] = useState<boolean>(false);
+
+  const displayFoods = foods.length > 0 ? foods : PRESET_FOODS.map((item, index) => ({ ...item, id: `preset-food-${index}` } as FoodItem));
+  const isFoodsFallback = foods.length === 0;
+
+  const displayServices = services.length > 0 ? services : PRESET_SERVICES.map((item, index) => ({ ...item, id: `preset-service-${index}` } as ElectricianService));
+  const isServicesFallback = services.length === 0;
 
   // Food Form State
   const [foodName, setFoodName] = useState('');
@@ -79,19 +96,56 @@ export default function AdminPanel() {
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [seeding, setSeeding] = useState(false);
+
+  const handleRestoreDefaults = async () => {
+    setSeeding(true);
+    try {
+      await seedDatabaseIfEmpty();
+      triggerSuccess("Baseline menu items and electrician packages synced in Firestore!");
+    } catch (err) {
+      triggerError("Restoring default data failed. Verify Firebase configuration.");
+    } finally {
+      setSeeding(false);
+    }
+  };
 
   // Monitor Collections in real-time
   useEffect(() => {
     const unsubFoods = subscribeToFoods((data) => setFoods(data));
     const unsubServices = subscribeToServices((data) => setServices(data));
     const unsubOrders = subscribeToOrders((data) => setOrders(data));
+    const unsubUsers = subscribeToRegisteredUsers((data) => setRegisteredUsers(data));
+    const unsubFee = subscribeToDeliveryFee((amount) => {
+      setAdminDeliveryFee(amount.toString());
+    });
 
     return () => {
       unsubFoods();
       unsubServices();
       unsubOrders();
+      unsubUsers();
+      unsubFee();
     };
   }, []);
+
+  const handleUpdateDeliverySetting = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const feeNum = parseFloat(adminDeliveryFee);
+    if (isNaN(feeNum) || feeNum < 0) {
+      triggerError("Specify a valid positive delivery charge!");
+      return;
+    }
+    setUpdatingFee(true);
+    try {
+      await updateDeliveryFee(feeNum);
+      triggerSuccess(`Delivery charges successfully set to Rs. ${feeNum}!`);
+    } catch (err) {
+      triggerError("Failed to update delivery charges. Try again!");
+    } finally {
+      setUpdatingFee(false);
+    }
+  };
 
   const triggerSuccess = (msg: string) => {
     setSuccessMessage(msg);
@@ -171,6 +225,10 @@ export default function AdminPanel() {
 
   // Switch availability of item
   const toggleFoodAvailability = async (id: string, current: boolean) => {
+    if (id.startsWith('preset-')) {
+      triggerError("Please click 'Seed & Sync Defaults' first to edit default items!");
+      return;
+    }
     try {
       await updateFoodItem(id, { isAvailable: !current });
       triggerSuccess("Updated food availability state.");
@@ -180,6 +238,10 @@ export default function AdminPanel() {
   };
 
   const toggleServiceAvailability = async (id: string, current: boolean) => {
+    if (id.startsWith('preset-')) {
+      triggerError("Please click 'Seed & Sync Defaults' first to edit electrician service!");
+      return;
+    }
     try {
       await updateElectricianService(id, { isAvailable: !current });
       triggerSuccess("Updated electrician availability state.");
@@ -190,6 +252,10 @@ export default function AdminPanel() {
 
   // Deletion logic
   const handleRemoveFood = async (id: string, name: string) => {
+    if (id.startsWith('preset-')) {
+      triggerError("Please click 'Seed & Sync Defaults' first to delete default items!");
+      return;
+    }
     if (!window.confirm(`Delete "${name}" from server list?`)) return;
     try {
       await deleteFoodItem(id);
@@ -200,6 +266,10 @@ export default function AdminPanel() {
   };
 
   const handleRemoveService = async (id: string, name: string) => {
+    if (id.startsWith('preset-')) {
+      triggerError("Please click 'Seed & Sync Defaults' first to delete electrician service!");
+      return;
+    }
     if (!window.confirm(`Delete "${name}" service pack?`)) return;
     try {
       await deleteElectricianService(id);
@@ -308,6 +378,26 @@ export default function AdminPanel() {
             }`}
           >
             ⚡ Electricians ({services.length})
+          </button>
+          <button
+            onClick={() => setActiveFormTab('customers')}
+            className={`flex-1 md:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              activeFormTab === 'customers' 
+                ? 'bg-white text-gray-950 shadow-xs' 
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+            }`}
+          >
+            👥 Customers ({registeredUsers.length})
+          </button>
+          <button
+            onClick={() => setActiveFormTab('settings')}
+            className={`flex-1 md:flex-none px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+              activeFormTab === 'settings' 
+                ? 'bg-white text-gray-950 shadow-xs' 
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+            }`}
+          >
+            ⚙️ Delivery Charges
           </button>
         </div>
       </div>
@@ -704,61 +794,81 @@ export default function AdminPanel() {
               🍔 Currently Active Menu Items
             </h3>
 
-            {foods.length === 0 ? (
-              <p className="text-xs text-gray-400 italic py-10 text-center">No foods in list. Use the adjacent form to construct delicious items!</p>
-            ) : (
-              <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-xs divide-y divide-gray-55">
-                {foods.map((food) => (
-                  <div key={food.id} className="p-4 flex items-center gap-4 hover:bg-gray-50/50 transition duration-150">
-                    <img
-                      src={food.imageUrl}
-                      alt={food.name}
-                      referrerPolicy="no-referrer"
-                      className="w-16 h-16 rounded-xl object-cover border border-gray-100 shrink-0 bg-gray-50"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=300';
-                      }}
-                    />
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 text-[8px] font-black uppercase tracking-wider rounded border border-amber-100/40">
-                          {food.category}
-                        </span>
-                        <span className={`text-[9px] font-bold ${food.isAvailable ? 'text-emerald-600' : 'text-red-500'}`}>
-                          ● {food.isAvailable ? 'In Stock' : 'Sold Out'}
-                        </span>
-                      </div>
-                      <h4 className="font-extrabold text-sm text-gray-900 mt-1 truncate">{food.name}</h4>
-                      <p className="text-xs font-black text-gray-950 mt-0.5">Rs. {food.price}</p>
-                    </div>
-
-                    {/* Operational controls */}
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => toggleFoodAvailability(food.id, food.isAvailable)}
-                        className="p-1.5 text-gray-550 hover:bg-gray-50 hover:text-gray-950 rounded-lg"
-                        title={food.isAvailable ? "Set Sold Out" : "Set In Stock"}
-                      >
-                        {food.isAvailable ? (
-                          <ToggleRight className="w-7 h-7 text-emerald-500" />
-                        ) : (
-                          <ToggleLeft className="w-7 h-7 text-gray-300" />
-                        )}
-                      </button>
-
-                      <button
-                        onClick={() => handleRemoveFood(food.id, food.name)}
-                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
-                        title="Delete Permanently"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+            {isFoodsFallback && (
+              <div className="bg-amber-50 border border-amber-200/60 rounded-2xl p-5 text-xs text-amber-900 font-semibold space-y-2 mb-2">
+                <p className="flex items-center gap-1.5 font-bold text-amber-800">
+                  ⚠️ Default Local Presets Mode (Read-Only)
+                </p>
+                <p className="font-normal text-[11.5px] text-amber-700 leading-relaxed font-sans">
+                  Aapke server-side database (Firestore) me koi items active nahi hain. Neeche default previews show ho rahe hain. Inhe custom add, edit ya delete karne ke liye backup baseline initialize karein:
+                </p>
+                <button
+                  type="button"
+                  onClick={handleRestoreDefaults}
+                  disabled={seeding}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-[10px] uppercase tracking-wider transition cursor-pointer active:scale-95 inline-flex items-center gap-1.5 shadow-sm"
+                >
+                  {seeding ? "Restoring baseline..." : "⚡ Seed & Save Preset Foods To Firestore"}
+                </button>
               </div>
             )}
+
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-xs divide-y divide-gray-55">
+              {displayFoods.map((food) => (
+                <div key={food.id} className="p-4 flex items-center gap-4 hover:bg-gray-50/50 transition duration-150">
+                  <img
+                    src={food.imageUrl}
+                    alt={food.name}
+                    referrerPolicy="no-referrer"
+                    className="w-16 h-16 rounded-xl object-cover border border-gray-100 shrink-0 bg-gray-50 animate-none mt-0"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=300';
+                    }}
+                  />
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 text-[8px] font-black uppercase tracking-wider rounded border border-amber-100/40">
+                        {food.category}
+                      </span>
+                      <span className={`text-[9px] font-bold ${food.isAvailable ? 'text-emerald-600' : 'text-red-500'}`}>
+                        ● {food.isAvailable ? 'In Stock' : 'Sold Out'}
+                      </span>
+                      {food.id.startsWith('preset-') && (
+                        <span className="px-1.5 py-0.2 bg-gray-100 text-gray-500 text-[8px] font-bold uppercase rounded border border-gray-200">
+                          PRESET
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="font-extrabold text-sm text-gray-900 mt-1 truncate">{food.name}</h4>
+                    <p className="text-xs font-black text-gray-950 mt-0.5">Rs. {food.price}</p>
+                  </div>
+
+                  {/* Operational controls */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => toggleFoodAvailability(food.id, food.isAvailable)}
+                      className="p-1.5 text-gray-550 hover:bg-gray-50 hover:text-gray-950 rounded-lg"
+                      title={food.isAvailable ? "Set Sold Out" : "Set In Stock"}
+                    >
+                      {food.isAvailable ? (
+                        <ToggleRight className="w-7 h-7 text-emerald-500" />
+                      ) : (
+                        <ToggleLeft className="w-7 h-7 text-gray-300" />
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => handleRemoveFood(food.id, food.name)}
+                      className="p-2 text-gray-400 hover:text-red-650 hover:bg-red-50 rounded-lg transition"
+                      title="Delete Permanently"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
         </div>
@@ -884,62 +994,200 @@ export default function AdminPanel() {
               ⚡ Launched Electrician Diagnostic Packages
             </h3>
 
-            {services.length === 0 ? (
-              <p className="text-xs text-gray-400 italic py-10 text-center">No electrician service packages saved.</p>
-            ) : (
-              <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-xs divide-y divide-gray-50">
-                {services.map((srv) => (
-                  <div key={srv.id} className="p-4 flex items-center gap-4 hover:bg-gray-50/50 transition">
-                    <img
-                      src={srv.imageUrl}
-                      alt={srv.name}
-                      referrerPolicy="no-referrer"
-                      className="w-16 h-16 rounded-xl object-cover border border-gray-100 shrink-0 bg-gray-50"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1504148455328-c376907d081c?q=80&w=300';
-                      }}
-                    />
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[8px] font-black uppercase tracking-wider rounded border border-blue-105">
-                          {srv.category}
-                        </span>
-                        <span className={`text-[9px] font-bold ${srv.isAvailable ? 'text-emerald-600' : 'text-red-500'}`}>
-                          ● {srv.isAvailable ? 'Accepting Orders' : 'Offline / busy'}
-                        </span>
-                      </div>
-                      <h4 className="font-extrabold text-sm text-gray-900 mt-1 truncate">{srv.name}</h4>
-                      <p className="text-xs font-black text-gray-950 mt-0.5">Rs. {srv.basePrice}</p>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => toggleServiceAvailability(srv.id, srv.isAvailable)}
-                        className="p-1.5 text-gray-450 hover:text-gray-950 rounded-lg"
-                        title={srv.isAvailable ? "Set Busy/Offline" : "Set Active"}
-                      >
-                        {srv.isAvailable ? (
-                          <ToggleRight className="w-7 h-7 text-emerald-500" />
-                        ) : (
-                          <ToggleLeft className="w-7 h-7 text-gray-300" />
-                        )}
-                      </button>
-
-                      <button
-                        onClick={() => handleRemoveService(srv.id, srv.name)}
-                        className="p-2 text-gray-400 hover:text-red-650 hover:bg-red-50 rounded-lg transition"
-                        title="Delete Permanently"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+            {isServicesFallback && (
+              <div className="bg-blue-50 border border-blue-200/60 rounded-2xl p-5 text-xs text-blue-900 font-semibold space-y-2 mb-2">
+                <p className="flex items-center gap-1.5 font-bold text-blue-800">
+                  ⚠️ Default Local Electricians Mode (Read-Only)
+                </p>
+                <p className="font-normal text-[11.5px] text-blue-700 leading-relaxed font-sans">
+                  Aapke server-side database (Firestore) me koi services active nahi hain. Neeche default diagnostic packages show ho rahe hain. Inhe edit, state change, ya delete karne ke liye server sync karein:
+                </p>
+                <button
+                  type="button"
+                  onClick={handleRestoreDefaults}
+                  disabled={seeding}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-[10px] uppercase tracking-wider transition cursor-pointer active:scale-95 inline-flex items-center gap-1.5 shadow-sm"
+                >
+                  {seeding ? "Restoring baseline..." : "⚡ Seed & Save Preset Services To Firestore"}
+                </button>
               </div>
             )}
+
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-xs divide-y divide-gray-50">
+              {displayServices.map((srv) => (
+                <div key={srv.id} className="p-4 flex items-center gap-4 hover:bg-gray-50/50 transition">
+                  <img
+                    src={srv.imageUrl}
+                    alt={srv.name}
+                    referrerPolicy="no-referrer"
+                    className="w-16 h-16 rounded-xl object-cover border border-gray-100 shrink-0 bg-gray-50"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1504148455328-c376907d081c?q=80&w=300';
+                    }}
+                  />
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 text-[8px] font-black uppercase tracking-wider rounded border border-blue-105">
+                        {srv.category}
+                      </span>
+                      <span className={`text-[9px] font-bold ${srv.isAvailable ? 'text-emerald-600' : 'text-red-500'}`}>
+                        ● {srv.isAvailable ? 'Accepting Orders' : 'Offline / busy'}
+                      </span>
+                      {srv.id.startsWith('preset-') && (
+                        <span className="px-1.5 py-0.2 bg-gray-100 text-gray-500 text-[8px] font-bold uppercase rounded border border-gray-200">
+                          PRESET
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="font-extrabold text-sm text-gray-900 mt-1 truncate">{srv.name}</h4>
+                    <p className="text-xs font-black text-gray-950 mt-0.5">Rs. {srv.basePrice}</p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => toggleServiceAvailability(srv.id, srv.isAvailable)}
+                      className="p-1.5 text-gray-450 hover:text-gray-950 rounded-lg"
+                      title={srv.isAvailable ? "Set Busy/Offline" : "Set Active"}
+                    >
+                      {srv.isAvailable ? (
+                        <ToggleRight className="w-7 h-7 text-emerald-500" />
+                      ) : (
+                        <ToggleLeft className="w-7 h-7 text-gray-300" />
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => handleRemoveService(srv.id, srv.name)}
+                      className="p-2 text-gray-400 hover:text-red-650 hover:bg-red-50 rounded-lg transition"
+                      title="Delete Permanently"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
+        </div>
+      )}
+
+      {/* TAB CONTENT: 4. REGISTERED CUSTOMERS DATABASE LIST */}
+      {activeFormTab === 'customers' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-black text-gray-950 flex items-center gap-1.5">
+                👥 Registered Customers (Phone Registry)
+              </h3>
+              <p className="text-xs text-gray-500 mt-1">Jab bhi naye users app me apna account details load/save karengay ya order place karay ge tou unki details automatic real-time yahan show hon gi.</p>
+            </div>
+            <span className="px-3 py-1 bg-amber-50 text-amber-700 font-extrabold text-[10px] rounded-full uppercase tracking-wider self-start sm:self-auto border border-amber-100">
+              {registeredUsers.length} total registered
+            </span>
+          </div>
+
+          {registeredUsers.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-gray-150 p-16 text-center max-w-sm mx-auto">
+              <span className="text-5xl block mb-3 font-bold">🎯</span>
+              <h4 className="font-bold text-gray-800 text-lg">No Users Registered Yet</h4>
+              <p className="text-xs text-gray-500 mt-1">
+                Jab direct phone number, naam ya user profile details load hon gi, tab yahan unka mobile sheet and location real-time show ho ga!
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-xs">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-gray-100 uppercase tracking-widest text-[9px] font-black text-gray-400">
+                      <th className="p-4">Customer Name</th>
+                      <th className="p-4">Phone Number / Calling</th>
+                      <th className="p-4">Dadu Delivery Address</th>
+                      <th className="p-4">Famous Landmark</th>
+                      <th className="p-4">Registered Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50 font-medium text-gray-755">
+                    {registeredUsers.map((user) => (
+                      <tr key={user.id} className="hover:bg-amber-50/15 transition-colors">
+                        <td className="p-4 font-extrabold text-gray-950 text-sm">
+                          {user.customerName}
+                        </td>
+                        <td className="p-4">
+                          <a 
+                            href={`tel:${user.phoneNumber}`}
+                            className="inline-flex items-center gap-1 text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1 font-mono font-bold hover:bg-amber-100 transition whitespace-nowrap"
+                          >
+                            <Phone className="w-3.5 h-3.5" />
+                            {user.phoneNumber}
+                          </a>
+                        </td>
+                        <td className="p-4 font-bold max-w-xs truncate" title={user.deliveryAddress}>
+                          {user.deliveryAddress}
+                        </td>
+                        <td className="p-4 text-slate-550 font-extrabold">
+                          {user.nearestLandmark ? (
+                            <span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded-full text-[10px]">
+                              🏛️ {user.nearestLandmark}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300 italic font-normal">None entered</span>
+                          )}
+                        </td>
+                        <td className="p-4 text-slate-400 font-mono text-[10px]">
+                          {user.createdAt ? new Date(user.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Unknown'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB CONTENT: 5. DELIVERY CHARGES CONFIGURATION PANEL */}
+      {activeFormTab === 'settings' && (
+        <div className="bg-white rounded-3xl border border-gray-150 shadow-md p-6 max-w-xl mx-auto">
+          <h3 className="text-lg font-black text-gray-950 mb-2 flex items-center gap-2">
+            ⚙️ Delivery Charges Settings
+          </h3>
+          <p className="text-xs text-gray-500 mb-6 leading-relaxed">
+            Yahan se aap Dadu City ke food orders par flat delivery charges set kar sakte hain. Jab bhi customer buy karega ya order confirm karega, use direct yahi dynamic charges buy screen par lag kar total calculate ho ga.
+          </p>
+
+          <form onSubmit={handleUpdateDeliverySetting} className="space-y-4">
+            <div>
+              <label className="block text-xs font-black text-gray-700 uppercase tracking-widest mb-2">
+                Flat Delivery Fee (Rs. PKR)
+              </label>
+              <div className="relative rounded-xl overflow-hidden border border-gray-300 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-205 transition-all">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400 text-sm">
+                  Rs.
+                </span>
+                <input
+                  type="number"
+                  value={adminDeliveryFee}
+                  onChange={(e) => setAdminDeliveryFee(e.target.value)}
+                  placeholder="e.g. 60"
+                  className="w-full pl-12 pr-4 py-3 text-sm font-bold text-gray-800 bg-white focus:outline-hidden"
+                  required
+                  min="0"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={updatingFee}
+              className="w-full py-3 bg-amber-500 hover:bg-amber-600 font-extrabold text-white text-xs uppercase tracking-wider rounded-xl transition shadow-md shadow-amber-500/20 active:scale-95 disabled:opacity-50"
+            >
+              {updatingFee ? 'Updating delivery charges...' : 'Save delivery charges'}
+            </button>
+          </form>
         </div>
       )}
 

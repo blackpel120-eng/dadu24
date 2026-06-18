@@ -8,7 +8,7 @@ import Header from './components/Header';
 import UserPanel from './components/UserPanel';
 import AdminPanel from './components/AdminPanel';
 import { OrderItem } from './types';
-import { seedDatabaseIfEmpty } from './lib/firebase';
+import { seedDatabaseIfEmpty, subscribeToDeliveryFee } from './lib/firebase';
 import { Sparkles, Bike, Phone, ShieldCheck, MapPin, Heart } from 'lucide-react';
 
 export default function App() {
@@ -20,10 +20,19 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'food' | 'electrician' | 'admin' | 'tracking'>('food');
   const [cart, setCart] = useState<OrderItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [deliveryFee, setDeliveryFee] = useState<number>(60);
 
   // Trigger Database preset seeding once on load if empty
   useEffect(() => {
     seedDatabaseIfEmpty();
+  }, []);
+
+  // Listen to Firestore dynamic delivery fee setting
+  useEffect(() => {
+    const unsub = subscribeToDeliveryFee((amount) => {
+      setDeliveryFee(amount);
+    });
+    return () => unsub();
   }, []);
 
   const handleAdminToggle = (hasAccess: boolean) => {
@@ -38,8 +47,8 @@ export default function App() {
   // Live total of selected items in currency
   const cartSubtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
-  // Add 60 PKR flat delivery shipping in Dadu
-  const cartTotal = cartSubtotal > 0 ? cartSubtotal + 60 : 0;
+  // Add dynamic delivery shipping in Dadu
+  const cartTotal = cartSubtotal > 0 ? cartSubtotal + deliveryFee : 0;
 
   return (
     <div className="flex flex-col min-h-screen bg-transparent font-sans text-gray-900 antialiased selection:bg-amber-100 selection:text-amber-900">
@@ -68,6 +77,7 @@ export default function App() {
             setCart={setCart}
             isCartOpen={isCartOpen}
             setIsCartOpen={setIsCartOpen}
+            deliveryFee={deliveryFee}
           />
         )}
       </div>

@@ -44,6 +44,15 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["customerName", "phoneNumber", "deliveryAddress", "totalAmount", "status", "createdAt"]
+    },
+    "SystemSetting": {
+      "title": "SystemSetting",
+      "description": "System configuration values like dynamic delivery fee.",
+      "type": "object",
+      "properties": {
+        "amount": { "type": "number", "description": "The current delivery fee in PKR" }
+      },
+      "required": ["amount"]
     }
   },
   "firestore": {
@@ -58,6 +67,10 @@
     "orders": {
       "schema": "Order",
       "description": "The customer orders containing item lists and status tracker."
+    },
+    "settings": {
+      "schema": "SystemSetting",
+      "description": "General settings stored in key-document format."
     }
   }
 }

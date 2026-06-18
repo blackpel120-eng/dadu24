@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
 import { FoodItem, ElectricianService, OrderItem, Order } from '../types';
 import { 
   Search, 
@@ -17,7 +18,7 @@ import {
   Building,
   User
 } from 'lucide-react';
-import { createOrder, subscribeToFoods, subscribeToServices, PRESET_FOODS, PRESET_SERVICES } from '../lib/firebase';
+import { createOrder, subscribeToFoods, subscribeToServices, PRESET_FOODS, PRESET_SERVICES, saveRegisteredUser, subscribeToOrders } from '../lib/firebase';
 
 interface UserPanelProps {
   initialActiveTab: 'food' | 'electrician' | 'tracking';
@@ -27,6 +28,7 @@ interface UserPanelProps {
   setCart: React.Dispatch<React.SetStateAction<OrderItem[]>>;
   isCartOpen: boolean;
   setIsCartOpen: (open: boolean) => void;
+  deliveryFee: number;
 }
 
 export default function UserPanel({
@@ -36,7 +38,8 @@ export default function UserPanel({
   cart,
   setCart,
   isCartOpen,
-  setIsCartOpen
+  setIsCartOpen,
+  deliveryFee
 }: UserPanelProps) {
   // Live State from Firestore, pre-filled with presets for instantaneous loading!
   const [foods, setFoods] = useState<FoodItem[]>(() => 
@@ -54,11 +57,18 @@ export default function UserPanel({
 
   // Checkout Form State
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
-  const [customerName, setCustomerName] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [nearestLandmark, setNearestLandmark] = useState('');
+  const [customerName, setCustomerName] = useState(() => localStorage.getItem('dadu247_username') || '');
+  const [phoneNumber, setPhoneNumber] = useState(() => localStorage.getItem('dadu247_phone') || '');
+  const [deliveryAddress, setDeliveryAddress] = useState(() => localStorage.getItem('dadu247_address') || '');
+  const [nearestLandmark, setNearestLandmark] = useState(() => localStorage.getItem('dadu247_landmark') || '');
   const [orderNotes, setOrderNotes] = useState('');
+
+  // Profile management states
+  const [isEditingProfile, setIsEditingProfile] = useState(() => {
+    return !localStorage.getItem('dadu247_username');
+  });
+  const [profileSavedMsg, setProfileSavedMsg] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   
   // Checkout Success State
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
@@ -97,7 +107,8 @@ export default function UserPanel({
     }
   }, []);
 
-  const DELIVERY_FEE = 60; // Standard flat delivery fee in Dadu city (Rs 60 / PKR)
+  const DELIVERY_FEE = deliveryFee; // Dynamic flat delivery fee inside Dadu City
+
 
   // Calculate Cart Metrics
   const cartSubtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -135,6 +146,45 @@ export default function UserPanel({
   };
 
   // Place Order Action (Saving to Firestore & localStorage)
+  const handleSaveProfile = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!customerName || !phoneNumber || !deliveryAddress) {
+      alert("Please fill in Name, Phone, and Delivery Address to save your profile!");
+      return;
+    }
+
+    setIsSavingProfile(true);
+    setProfileSavedMsg('');
+
+    try {
+      // Save locally
+      localStorage.setItem('dadu247_username', customerName);
+      localStorage.setItem('dadu247_phone', phoneNumber);
+      localStorage.setItem('dadu247_address', deliveryAddress);
+      localStorage.setItem('dadu247_landmark', nearestLandmark);
+
+      // Sync to Firestore Users Collection
+      await saveRegisteredUser({
+        customerName,
+        phoneNumber,
+        deliveryAddress,
+        nearestLandmark
+      });
+
+      setProfileSavedMsg("Mubarak! Your profile details have been synced successfully with Dadu 24#7!");
+      setIsEditingProfile(false);
+      setTimeout(() => setProfileSavedMsg(''), 4500);
+    } catch (err) {
+      console.error("Profile sync to Firestore failed: ", err);
+      // Still show local success to keep UX smooth
+      setProfileSavedMsg("Saved locally (Offline mode active). Your details are saved on this device!");
+      setIsEditingProfile(false);
+      setTimeout(() => setProfileSavedMsg(''), 4500);
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0) return;
@@ -165,6 +215,18 @@ export default function UserPanel({
         id: orderId,
         ...orderData
       };
+
+      // Auto-register user at checkout as well!
+      try {
+        await saveRegisteredUser({
+          customerName,
+          phoneNumber,
+          deliveryAddress,
+          nearestLandmark
+        });
+      } catch (profErr) {
+        console.error("Auto registration failed: ", profErr);
+      }
 
       // Save Order Id to localStorage for tracking
       const localIds: string[] = JSON.parse(localStorage.getItem('dadu247_order_ids') || '[]');
@@ -224,6 +286,247 @@ export default function UserPanel({
     const matchCat = selectedServiceCategory === 'All' || s.category === selectedServiceCategory;
     return matchSearch && matchCat;
   });
+
+  // Helpers for continuous cascading scroll (optimized for mobile)
+  const renderFoodsSection = () => (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
+            🍕 <span className="text-amber-500">Dadu Garam Garam</span> Food Menu
+          </h2>
+          <p className="text-xs text-gray-500 font-medium font-sans">Freshly prepared, safe, and hygienic food delivered instantly in Dadu City</p>
+        </div>
+        
+        {/* Food Local Category Row */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-2 shrink-0 scrollbar-none max-w-full">
+          {foodCategories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setSelectedFoodCategory(cat)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black whitespace-nowrap transition-all duration-150 ${
+                selectedFoodCategory === cat 
+                  ? 'bg-amber-500 text-white shadow-xs' 
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filteredFoods.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-150 p-8 text-center max-w-md mx-auto shadow-xs">
+          <p className="text-2xl mb-1">🍽️</p>
+          <h3 className="font-bold text-gray-800 text-sm">No Food Items Match</h3>
+          <p className="text-xs text-gray-400 mt-1">Garam Khane aapki search ke mutabiq nahi mile. Naya search karein.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {filteredFoods.map((item) => (
+            <div 
+              key={item.id}
+              className={`bg-white rounded-2xl border ${item.isAvailable ? 'border-gray-100/80 hover:shadow-lg' : 'border-gray-200 opacity-80'} transition-all duration-300 flex flex-col overflow-hidden relative group`}
+            >
+              <div className="h-44 sm:h-48 w-full bg-gray-100 relative overflow-hidden">
+                <img
+                  src={item.imageUrl}
+                  alt={item.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-350"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop';
+                  }}
+                />
+                <span className="absolute top-2.5 left-2.5 px-2 py-0.5 bg-white/95 backdrop-blur-xs text-[9px] font-extrabold rounded text-amber-800 shadow-sm uppercase tracking-wider">
+                  {item.category}
+                </span>
+                {!item.isAvailable && (
+                  <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center">
+                    <span className="px-3.5 py-1.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest leading-none">
+                      Soon (Unavailable)
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between">
+                <div className="space-y-1.5">
+                  <h3 className="font-extrabold text-gray-900 group-hover:text-amber-600 transition-colors leading-tight text-sm sm:text-base">
+                    {item.name}
+                  </h3>
+                  <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">
+                    {item.description}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between pt-4 mt-3 sm:mt-4 border-t border-gray-55">
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider leading-none">Price</p>
+                    <span className="text-base font-black text-gray-950">
+                      Rs. {item.price}
+                    </span>
+                  </div>
+
+                  {item.isAvailable && (
+                    <div className="flex items-center gap-1">
+                      {cart.some(ci => ci.id === item.id) ? (
+                        <div className="flex items-center gap-2 px-1 py-1 bg-amber-50 rounded-lg border border-amber-200">
+                          <button
+                            onClick={() => handleRemoveFromCart(item.id)}
+                            className="w-6.5 h-6.5 bg-white rounded flex items-center justify-center font-black text-amber-600 shadow-xs border border-amber-100 hover:bg-amber-100"
+                          >
+                            -
+                          </button>
+                          <span className="text-xs font-black text-amber-900 px-0.5">
+                            {cart.find(ci => ci.id === item.id)?.quantity}
+                          </span>
+                          <button
+                            onClick={() => handleAddToCart(item.id, item.name, item.price, 'food')}
+                            className="w-6.5 h-6.5 bg-amber-500 text-white rounded flex items-center justify-center font-bold shadow-xs hover:bg-amber-600"
+                          >
+                            +
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleAddToCart(item.id, item.name, item.price, 'food')}
+                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-lg transition duration-200 cursor-pointer shadow-sm shadow-amber-500/10 active:scale-95"
+                        >
+                          Add +
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderElectricianSection = () => (
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2">
+            ⚡ <span className="text-blue-600">Dadu Electrician</span> Services
+          </h2>
+          <p className="text-xs text-gray-500 font-medium">Safe repairs, AC charging, board wiring, and UPS battery diagnosis in Dadu City</p>
+        </div>
+        
+        {/* Electrician Local Category Row */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-2 shrink-0 scrollbar-none max-w-full">
+          {serviceCategories.map((cat) => (
+            <button
+              key={cat}
+              onClick={() => setSelectedServiceCategory(cat)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black whitespace-nowrap transition-all duration-150 ${
+                selectedServiceCategory === cat 
+                  ? 'bg-blue-600 text-white shadow-xs' 
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filteredServices.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-150 p-8 text-center max-w-md mx-auto shadow-xs">
+          <p className="text-2xl mb-1">🛠️</p>
+          <h3 className="font-bold text-gray-800 text-sm">No Electrician Services Match</h3>
+          <p className="text-xs text-gray-400 mt-1">Aapki high electrical search criteria ke mutabiq koi diagnostic packet nahi mila.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {filteredServices.map((service) => (
+            <div 
+              key={service.id}
+              className={`bg-white rounded-2xl border ${service.isAvailable ? 'border-gray-100/80 hover:shadow-lg' : 'border-gray-150 opacity-80'} transition-all duration-300 overflow-hidden flex flex-col sm:flex-row relative group`}
+            >
+              <div className="h-40 sm:h-auto sm:w-40 bg-gray-50 relative shrink-0">
+                <img
+                  src={service.imageUrl}
+                  alt={service.name}
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-350"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1504148455328-c376907d081c?q=80&w=600&auto=format&fit=crop';
+                  }}
+                />
+                <span className="absolute top-2.5 left-2.5 px-2 py-0.5 bg-blue-600 text-white rounded text-[9px] font-extrabold uppercase tracking-wide">
+                  {service.category}
+                </span>
+                {!service.isAvailable && (
+                  <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center">
+                    <span className="px-3.5 py-1.5 bg-red-650 text-white rounded-xl text-[10px] font-black uppercase tracking-wider">
+                      Bookings Full
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 sm:p-5 flex-1 flex flex-col justify-between">
+                <div>
+                  <h3 className="font-extrabold text-gray-950 group-hover:text-blue-600 transition-colors leading-tight text-sm sm:text-base">
+                    {service.name}
+                  </h3>
+                  <p className="text-xs text-gray-550 mt-1.5 leading-relaxed">
+                    {service.description}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between mt-4 pt-3.5 border-t border-gray-55">
+                  <div>
+                    <p className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider leading-none">Base Price</p>
+                    <span className="text-base font-black text-gray-950">
+                      Rs. {service.basePrice}
+                    </span>
+                  </div>
+
+                  {service.isAvailable && (
+                    <div>
+                      {cart.some(ci => ci.id === service.id) ? (
+                        <div className="flex items-center gap-1.5 px-1 py-1 bg-blue-50 rounded-lg border border-blue-105">
+                          <button
+                            onClick={() => handleRemoveFromCart(service.id)}
+                            className="w-6.5 h-6.5 bg-white rounded flex items-center justify-center font-black text-blue-600 shadow-xs hover:bg-blue-100"
+                          >
+                            -
+                          </button>
+                          <span className="text-xs font-black text-blue-900 px-1">
+                            {cart.find(ci => ci.id === service.id)?.quantity}
+                          </span>
+                          <button
+                            onClick={() => handleAddToCart(service.id, service.name, service.basePrice, 'electrician')}
+                            className="w-6.5 h-6.5 bg-blue-500 text-white rounded flex items-center justify-center font-bold shadow-xs hover:bg-blue-600"
+                          >
+                            +
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleAddToCart(service.id, service.name, service.basePrice, 'electrician')}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[10px] uppercase tracking-wider rounded-lg transition duration-200 cursor-pointer shadow-sm shadow-blue-500/10 active:scale-95"
+                        >
+                          Book Now
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-gray-50/50 pb-20">
@@ -304,16 +607,16 @@ export default function UserPanel({
       {/* 🔍 SEARCH AND FILTERS */}
       {activeTab !== 'tracking' && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-6">
-          <div className="bg-white rounded-2xl shadow-xl shadow-gray-100/40 p-4 border border-gray-100 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="bg-white rounded-2xl shadow-xl shadow-gray-100/40 p-4 border border-gray-100 flex items-center justify-between gap-4">
             {/* Live Search bar */}
-            <div className="relative w-full md:max-w-lg">
+            <div className="relative w-full">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
               <input
                 type="text"
-                placeholder={activeTab === 'food' ? "Search Special Biryani, Zinger, Salan..." : "Search AC leak, Fan wiring repair..."}
+                placeholder="Search biryani, zinger, AC service, fan repair..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-11 pr-4 py-3 bg-gray-50 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 border border-gray-100 text-sm font-medium"
+                className="w-full pl-11 pr-12 py-3 bg-gray-50 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500 border border-gray-100 text-xs sm:text-sm font-medium"
               />
               {searchQuery && (
                 <button 
@@ -324,39 +627,6 @@ export default function UserPanel({
                 </button>
               )}
             </div>
-
-            {/* Visual Quick Categories Selector */}
-            <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto overflow-x-auto py-1 scrollbar-thin">
-              {activeTab === 'food' ? (
-                foodCategories.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedFoodCategory(cat)}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-                      selectedFoodCategory === cat 
-                        ? 'bg-amber-500 text-white shadow-xs' 
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))
-              ) : (
-                serviceCategories.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedServiceCategory(cat)}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
-                      selectedServiceCategory === cat 
-                        ? 'bg-amber-500 text-white shadow-xs' 
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))
-              )}
-            </div>
           </div>
         </div>
       )}
@@ -364,222 +634,188 @@ export default function UserPanel({
       {/* 📦 CORE CONTENT SECTION */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-10">
         
+        {/* 📍 CUSTOMER REAL-TIME PROFILE SYNC BANNER */}
+        {activeTab !== 'tracking' && (
+          <div className="mb-8">
+            <div className="bg-white rounded-2xl border border-gray-150 p-6 shadow-md transition-all relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-400 to-yellow-500" />
+              
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 shrink-0 mt-0.5">
+                    <User className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-gray-900 uppercase tracking-tight flex items-center gap-2">
+                      👤 Mera Account / Delivery Profile
+                      {profileSavedMsg && (
+                        <span className="text-xs text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full animate-pulse">
+                          {profileSavedMsg}
+                        </span>
+                      )}
+                    </h3>
+                    
+                    {!customerName ? (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Welcome to Dadu 24#7! Enter your phone number/address once to save time on all future orders.
+                      </p>
+                    ) : !isEditingProfile ? (
+                      <div className="text-xs text-slate-600 mt-1.5 space-y-1">
+                        <p className="font-bold text-gray-800">
+                          Welcome Back, <span className="text-amber-600 font-extrabold">{customerName}</span>!
+                        </p>
+                        <p className="text-slate-500">
+                          📞 Phone: <span className="font-mono font-bold text-gray-900">{phoneNumber}</span> | 📍 Address: <span className="font-bold text-gray-850">{deliveryAddress}</span> {nearestLandmark && <>| 🏫 Landmark: <span className="font-bold text-gray-800">{nearestLandmark}</span></>}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Enter your correct Dadu address and active mobile number so we can register you.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {!isEditingProfile && (
+                  <button
+                    onClick={() => setIsEditingProfile(true)}
+                    className="px-4 py-2 border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition active:scale-95 shrink-0 cursor-pointer"
+                  >
+                    ✏️ Edit Details / Badlein
+                  </button>
+                )}
+              </div>
+
+              {isEditingProfile && (
+                <form onSubmit={(e) => { e.preventDefault(); handleSaveProfile(); }} className="mt-6 pt-6 border-t border-gray-100 grid sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in">
+                  <div>
+                    <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1.5">Your Name</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Aslam Ali"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1.5">Active Phone Number</label>
+                    <input
+                      type="tel"
+                      required
+                      placeholder="e.g. 03001234567"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-amber-500 focus:outline-hidden font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1.5">Home Delivery Address (Dadu)</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Girls College Road, Ward 3, Dadu"
+                      value={deliveryAddress}
+                      onChange={(e) => setDeliveryAddress(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest mb-1.5">Nearest Landmark (Optional)</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="e.g. Sindhi Hotel or Grid Station"
+                        value={nearestLandmark}
+                        onChange={(e) => setNearestLandmark(e.target.value)}
+                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                      />
+                      <button
+                        type="submit"
+                        disabled={isSavingProfile}
+                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-extrabold uppercase shrink-0 transition flex items-center justify-center cursor-pointer min-w-[100px]"
+                      >
+                        {isSavingProfile ? (
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          "Save & Sync"
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="text-center py-20">
             <div className="inline-block w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4" />
             <p className="text-gray-500 font-semibold">Please wait while we fetch items...</p>
           </div>
         ) : activeTab === 'food' ? (
-          /* FOOD SECTION */
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-2xl font-black text-gray-900 tracking-tight">Dadu Garam Garam Food Menu</h2>
-                <p className="text-xs text-gray-500 font-medium font-sans">Freshly prepared, safe, and hygienic food delivered instantly in Dadu City</p>
+          /* FOOD SECTION & THEN ELECTRICIAN SECTION SEQUENTIALLY */
+          <div className="space-y-16">
+            {renderFoodsSection()}
+            
+            {/* Visual separator banner */}
+            <div className="relative overflow-hidden rounded-3xl bg-linear-to-r from-blue-600 to-indigo-700 p-6 text-white shadow-lg shadow-blue-500/10 flex flex-col md:flex-row items-center justify-between gap-6">
+              <div className="space-y-2 text-center md:text-left">
+                <span className="inline-block px-2.5 py-1 bg-white/20 text-blue-100 rounded-full text-[10px] font-black uppercase tracking-wider bg-opacity-30">
+                  ⚡ Doorstep Electrical Care
+                </span>
+                <h3 className="text-lg sm:text-xl font-black">Need Quick Electrician Repairs in Dadu?</h3>
+                <p className="text-xs text-blue-100 max-w-xl font-medium leading-relaxed">
+                  AC gas charging, fan wiring, board repairing, UPS installation and home diagnostics. No visiting fees, honest prices!
+                </p>
               </div>
-              <span className="px-3 py-1 bg-amber-50 text-amber-700 font-extrabold text-xs rounded-full border border-amber-100">
-                {filteredFoods.length} Items Available
-              </span>
+              <button 
+                onClick={() => {
+                  const el = document.getElementById('electrician-section-anchor');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="px-5 py-2.5 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-black text-xs uppercase tracking-wider rounded-xl transition shadow-md active:scale-95 whitespace-nowrap shrink-0"
+              >
+                Explore Electricians 👇
+              </button>
             </div>
 
-            {filteredFoods.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-gray-150 p-12 text-center max-w-md mx-auto">
-                <p className="text-3xl mb-3">🍽️</p>
-                <h3 className="font-bold text-gray-800 text-lg">No Food Items Found</h3>
-                <p className="text-xs text-gray-500 mt-1">Naye items jald hi add kiye jayengay! Ya search query badal k dekhain.</p>
-              </div>
-            ) : (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredFoods.map((item) => (
-                  <div 
-                    key={item.id}
-                    className={`bg-white rounded-2xl border ${item.isAvailable ? 'border-gray-100 hover:shadow-xl' : 'border-gray-200 opacity-80'} transition-all duration-300 flex flex-col overflow-hidden relative group`}
-                  >
-                    {/* Item Image */}
-                    <div className="h-48 w-full bg-gray-100 relative overflow-hidden">
-                      <img
-                        src={item.imageUrl}
-                        alt={item.name}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-350"
-                        onError={(e) => {
-                          // Fallback Image
-                          (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=600&auto=format&fit=crop';
-                        }}
-                      />
-                      <span className="absolute top-3 left-3 px-2.5 py-1 bg-white/90 backdrop-blur-xs text-[10px] font-extrabold rounded-lg text-amber-800 shadow-sm uppercase tracking-wider">
-                        {item.category}
-                      </span>
-                      {!item.isAvailable && (
-                        <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center">
-                          <span className="px-4 py-2 bg-red-600 text-white rounded-xl text-xs font-black uppercase tracking-widest leading-none">
-                            Soon (Unavailable)
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Body Content */}
-                    <div className="p-5 flex-1 flex flex-col justify-between">
-                      <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <h3 className="font-extrabold text-gray-900 group-hover:text-amber-600 transition-colors leading-tight">
-                            {item.name}
-                          </h3>
-                        </div>
-                        <p className="text-xs text-gray-500 leading-relaxed line-clamp-2">
-                          {item.description}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center justify-between pt-5 mt-4 border-t border-gray-50">
-                        <div>
-                          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider leading-none">Price</p>
-                          <span className="text-lg font-black text-gray-900">
-                            Rs. {item.price}
-                          </span>
-                        </div>
-
-                        {item.isAvailable && (
-                          <div className="flex items-center gap-1">
-                            {cart.some(ci => ci.id === item.id) ? (
-                              <div className="flex items-center gap-2 px-1 py-1 bg-amber-50 rounded-xl border border-amber-200">
-                                <button
-                                  onClick={() => handleRemoveFromCart(item.id)}
-                                  className="w-7 h-7 bg-white rounded-lg flex items-center justify-center font-black text-amber-600 shadow-sm border border-amber-100 hover:bg-amber-100"
-                                >
-                                  -
-                                </button>
-                                <span className="text-sm font-black text-amber-900 px-1">
-                                  {cart.find(ci => ci.id === item.id)?.quantity}
-                                </span>
-                                <button
-                                  onClick={() => handleAddToCart(item.id, item.name, item.price, 'food')}
-                                  className="w-7 h-7 bg-amber-500 text-white rounded-lg flex items-center justify-center font-bold shadow-sm hover:bg-amber-600"
-                                >
-                                  +
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                onClick={() => handleAddToCart(item.id, item.name, item.price, 'food')}
-                                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition duration-200 cursor-pointer shadow-md shadow-amber-500/10 active:scale-95"
-                              >
-                                Add to Cart +
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div id="electrician-section-anchor" className="pt-2">
+              {renderElectricianSection()}
+            </div>
           </div>
         ) : activeTab === 'electrician' ? (
-          /* ELECTRICIAN SPECIALS */
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-2xl font-black text-gray-900 tracking-tight">⚡ Professional Electrician Services</h2>
-                <p className="text-xs text-gray-500 font-medium">Safe repairs, AC gas refilling, board wiring, and UPS battery diagnosis inside Dadu City</p>
+          /* ELECTRICIAN SPECIALS & THEN FOOD SECTION SEQUENTIALLY */
+          <div className="space-y-16">
+            {renderElectricianSection()}
+
+            {/* Visual separator banner */}
+            <div className="relative overflow-hidden rounded-3xl bg-linear-to-r from-amber-500 to-orange-600 p-6 text-white shadow-lg shadow-amber-500/10 flex flex-col md:flex-row items-center justify-between gap-6">
+              <div className="space-y-2 text-center md:text-left">
+                <span className="inline-block px-2.5 py-1 bg-white/20 text-yellow-105 rounded-full text-[10px] font-black uppercase tracking-wider bg-opacity-30">
+                  🍔 Garam Garam Delivery
+                </span>
+                <h3 className="text-lg sm:text-xl font-black">Hungry? Order delicious Dadu Food!</h3>
+                <p className="text-xs text-yellow-105 max-w-xl font-medium leading-relaxed">
+                  Tasty Biryani, spicy Burgers, sweet Rabri & special items from best cooks in Dadu sent straight to your door step!
+                </p>
               </div>
-              <span className="px-3 py-1 bg-amber-50 text-amber-700 font-extrabold text-xs rounded-full border border-amber-100">
-                {filteredServices.length} Services Listed
-              </span>
+              <button 
+                onClick={() => {
+                  const el = document.getElementById('food-section-anchor');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                className="px-5 py-2.5 bg-white hover:bg-gray-50 text-amber-600 font-black text-xs uppercase tracking-wider rounded-xl transition shadow-md active:scale-95 whitespace-nowrap shrink-0"
+              >
+                Order Hot Food 👇
+              </button>
             </div>
 
-            {filteredServices.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-gray-150 p-12 text-center max-w-md mx-auto">
-                <p className="text-3xl mb-3">🛠️</p>
-                <h3 className="font-bold text-gray-800 text-lg">No Services Found</h3>
-                <p className="text-xs text-gray-500 mt-1">Services jald hi update kiye jayengay!</p>
-              </div>
-            ) : (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-2 gap-6">
-                {filteredServices.map((service) => (
-                  <div 
-                    key={service.id}
-                    className={`bg-white rounded-2xl border ${service.isAvailable ? 'border-gray-100 hover:shadow-xl' : 'border-gray-150 opacity-80'} transition-all duration-300 overflow-hidden flex flex-col sm:flex-row relative group`}
-                  >
-                    {/* Horizontal split representation */}
-                    <div className="h-44 sm:h-auto sm:w-44 bg-gray-50 relative shrink-0">
-                      <img
-                        src={service.imageUrl}
-                        alt={service.name}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-350"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1504148455328-c376907d081c?q=80&w=600&auto=format&fit=crop';
-                        }}
-                      />
-                      <span className="absolute top-3 left-3 px-2 py-0.5 bg-blue-600 text-white rounded text-[9px] font-extrabold uppercase tracking-wide">
-                        {service.category}
-                      </span>
-                      {!service.isAvailable && (
-                        <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center">
-                          <span className="px-3 py-1.5 bg-red-650 text-white rounded-lg text-[10px] font-black uppercase tracking-wider">
-                            Bookings Full
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="p-5 flex-1 flex flex-col justify-between">
-                      <div>
-                        <h3 className="font-extrabold text-gray-900 group-hover:text-blue-600 transition-colors leading-tight">
-                          {service.name}
-                        </h3>
-                        <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-                          {service.description}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center justify-between mt-5 pt-3 border-t border-gray-50">
-                        <div>
-                          <p className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider leading-none">Diagnostic Base Fee</p>
-                          <span className="text-base font-black text-gray-900">
-                            Rs. {service.basePrice}
-                          </span>
-                        </div>
-
-                        {service.isAvailable && (
-                          <div>
-                            {cart.some(ci => ci.id === service.id) ? (
-                              <div className="flex items-center gap-1 px-1 py-1 bg-blue-50 rounded-xl border border-blue-100">
-                                <button
-                                  onClick={() => handleRemoveFromCart(service.id)}
-                                  className="w-7 h-7 bg-white rounded-lg flex items-center justify-center font-black text-blue-600 shadow-sm border border-blue-50 hover:bg-blue-100"
-                                >
-                                  -
-                                </button>
-                                <span className="text-xs font-black text-blue-900 px-1.5">
-                                  {cart.find(ci => ci.id === service.id)?.quantity} Service
-                                </span>
-                                <button
-                                  onClick={() => handleAddToCart(service.id, service.name, service.basePrice, 'electrician')}
-                                  className="w-7 h-7 bg-blue-500 text-white rounded-lg flex items-center justify-center font-bold shadow-sm hover:bg-blue-600"
-                                >
-                                  +
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                onClick={() => handleAddToCart(service.id, service.name, service.basePrice, 'electrician')}
-                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition duration-200 cursor-pointer shadow-md shadow-blue-500/10 active:scale-95"
-                              >
-                                Book Now
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div id="food-section-anchor" className="pt-2">
+              {renderFoodsSection()}
+            </div>
           </div>
         ) : (
           /* REALTIME ORDER TRACKER AREA FOR CLIENTS */
@@ -906,57 +1142,148 @@ export default function UserPanel({
           </div>
         </div>
       )}
-
-      {/* 🎉 ORDER PLACED SUCCESS POPUP */}
+        {/* 🎉 ORDER PLACED SUCCESS POPUP */}
       {orderSuccessModal && placedOrder && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/65 p-4 flex items-center justify-center animate-fade-in">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100 text-center space-y-5 animate-scale-up">
-            <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
-              <CheckCircle className="w-10 h-10 animate-bounce" />
+        <div className="fixed inset-0 z-55 overflow-y-auto bg-black/85 p-4 flex items-center justify-center backdrop-blur-xs">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.85, y: 30 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: -20 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 180 }}
+            className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-amber-100 text-center space-y-6 relative overflow-hidden"
+          >
+            {/* Ambient Animated Sunburst backgrounds */}
+            <div className="absolute top-0 left-0 right-0 h-24 bg-gradient-to-b from-amber-500/10 to-transparent pointer-events-none" />
+            <div className="absolute -top-16 -left-16 w-32 h-32 bg-amber-300/30 rounded-full blur-2xl pointer-events-none" />
+            <div className="absolute -bottom-16 -right-16 w-32 h-32 bg-yellow-300/30 rounded-full blur-2xl pointer-events-none" />
+            
+            {/* Animated Celebration Ring */}
+            <div className="relative pt-4">
+              <motion.div 
+                initial={{ rotate: -15, scale: 0 }}
+                animate={{ rotate: 0, scale: 1 }}
+                transition={{ type: "spring", damping: 12, delay: 0.1 }}
+                className="w-24 h-24 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 text-white flex items-center justify-center mx-auto shadow-lg relative z-10"
+              >
+                <CheckCircle className="w-14 h-14 stroke-[2.5]" />
+              </motion.div>
+              
+              {/* Multipoint Rich Confetti Particle Blast */}
+              {[...Array(12)].map((_, index) => {
+                const angle = (index * 360) / 12;
+                const radians = (angle * Math.PI) / 180;
+                const distanceX = Math.cos(radians) * (80 + Math.random() * 40);
+                const distanceY = Math.sin(radians) * (80 + Math.random() * 40);
+                const emojis = ['🎈', '🔥', '⚡', '🍔', '🎉', '💥', '✨'];
+                const randomEmoji = emojis[index % emojis.length];
+
+                return (
+                  <motion.div
+                    key={index}
+                    initial={{ x: 0, y: 0, opacity: 1, scale: 0.2 }}
+                    animate={{ 
+                      x: distanceX, 
+                      y: distanceY, 
+                      opacity: [1, 1, 0], 
+                      scale: [0.3, 1.3, 0.4],
+                      rotate: [0, 360 * (Math.random() > 0.5 ? 1 : -1)]
+                    }}
+                    transition={{ 
+                      duration: 2.2, 
+                      repeat: Infinity, 
+                      repeatType: "loop", 
+                      delay: Math.random() * 0.4,
+                      ease: "easeOut"
+                    }}
+                    className="absolute top-1/2 left-1/2 -mt-3 -ml-3 text-lg pointer-events-none z-0"
+                  >
+                    {randomEmoji}
+                  </motion.div>
+                );
+              })}
             </div>
 
-            <div className="space-y-1.5">
-              <h3 className="text-xl font-extrabold text-gray-950">Mubarak Ho! Order Placed! 🎉</h3>
-              <p className="text-xs text-gray-500 leading-relaxed">
-                Aapka order <span className="font-mono text-amber-600 font-extrabold">#{placedOrder.id.substring(0, 6)}</span> Dadu 24#7 direct kitchen/rider dispatch panel pe chala gya hai.
+            <div className="space-y-2">
+              <h3 className="text-2xl font-black text-gray-900 tracking-tight">Mubarak Ho! Order Placed! 🎉</h3>
+              <p className="text-xs text-gray-500 leading-relaxed max-w-xs mx-auto">
+                Aapka order <span className="font-mono text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md font-black">#{placedOrder.id.substring(0, 8)}</span> Dadu 24#7 live dispatch system par register ho chuka hai!
               </p>
             </div>
 
-            {/* Receipt Summary representation */}
-            <div className="bg-gray-50 border border-gray-100 p-4 rounded-xl text-left text-xs space-y-2">
-              <div className="flex justify-between font-bold border-b border-gray-200 pb-1.5">
-                <span>Rider Delivery To:</span>
-                <span className="text-gray-900 font-semibold">{placedOrder.customerName}</span>
+            {/* Receipt Summary Card */}
+            <motion.div 
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+              className="bg-gradient-to-b from-gray-50/80 to-slate-50/40 border border-gray-150 p-5 rounded-2xl text-left text-xs space-y-3 shadow-xs relative"
+            >
+              <div className="flex justify-between font-bold border-b border-gray-200/70 pb-2">
+                <span className="text-gray-400 uppercase font-mono tracking-wider text-[10px]">Recipient:</span>
+                <span className="text-gray-900 font-extrabold">{placedOrder.customerName}</span>
               </div>
-              <div className="space-y-1 text-gray-600">
-                <p>📞 Phone: {placedOrder.phoneNumber}</p>
-                <p>📍 Address: {placedOrder.deliveryAddress}</p>
-                {placedOrder.nearestLandmark && <p>🏫 Landmark: {placedOrder.nearestLandmark}</p>}
-                <p>📦 Order Type: {placedOrder.items[0]?.type === 'food' ? '🍔 Garam Food Delivery' : '⚡ Electrician Service'}</p>
+              
+              <div className="space-y-1.5 text-gray-600">
+                <p className="flex items-center gap-1.5">
+                  <span className="text-slate-400">📞 Phone:</span> 
+                  <span className="font-mono text-gray-900 font-bold">{placedOrder.phoneNumber}</span>
+                </p>
+                <p className="flex items-start gap-1.5">
+                  <span className="text-slate-400 shrink-0">📍 Address:</span> 
+                  <span className="text-gray-900 font-medium">{placedOrder.deliveryAddress}</span>
+                </p>
+                {placedOrder.nearestLandmark && (
+                  <p className="flex items-center gap-1.5 font-bold text-amber-700 bg-amber-50/60 p-1.5 rounded-lg border border-amber-100/30">
+                    <span>🏛️ Landmark:</span> 
+                    <span>{placedOrder.nearestLandmark}</span>
+                  </p>
+                )}
+                <p className="flex items-center gap-1.5 text-slate-500 leading-none">
+                  <span>📦 Category:</span> 
+                  <span className="font-bold text-slate-700">{placedOrder.items[0]?.type === 'food' ? '🍔 Punjabi / Desi Food' : '⚡ Electrician Dispatch Pack'}</span>
+                </p>
               </div>
-              <div className="border-t border-gray-200 pt-1.5 flex justify-between text-amber-700 font-extrabold">
-                <span>Pay on Delivery:</span>
-                <span className="text-sm font-black text-gray-900">Rs. {placedOrder.totalAmount}</span>
+
+              <div className="border-t border-dashed border-gray-200 pt-2.5 flex justify-between items-center text-amber-700 font-bold">
+                <span className="text-[10px] font-mono tracking-wider uppercase text-slate-400">Pay on Delivery (COD):</span>
+                <span className="text-base font-black text-gray-900">Rs. {placedOrder.totalAmount}</span>
               </div>
+            </motion.div>
+
+            {/* Cute bouncing delivery bike representation */}
+            <div className="flex items-center justify-center gap-1.5 py-1 px-4 bg-amber-50/45 rounded-lg border border-amber-100/20 w-fit mx-auto">
+              <motion.span 
+                animate={{ x: [-2, 2], y: [0, -1, 0] }}
+                transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
+                className="text-base"
+              >
+                🏍️
+              </motion.span>
+              <span className="text-[10px] text-amber-800 font-bold tracking-tight">Rider is cooking/preparing package...</span>
             </div>
 
-            <p className="text-[10px] text-gray-400 font-medium">
-              Aap check status button par click kar ke real-time rider dispatch update check kr skte hain.
+            <p className="text-[10px] text-gray-400 font-bold italic leading-tight">
+              Hamara staff order confirm karne k liye jald call karega. Aap live order track bhi kr sakte hain.
             </p>
 
-            <div className="flex gap-2">
+            <motion.div 
+              className="flex gap-2"
+              initial={{ scale: 0.98 }}
+              animate={{ scale: [0.98, 1.01, 0.98] }}
+              transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
+            >
               <button
+                type="button"
                 onClick={() => {
                   setOrderSuccessModal(false);
                   setPlacedOrder(null);
                   setActiveTab('tracking');
                 }}
-                className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition shadow-lg shadow-amber-500/10"
+                className="w-full py-4 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white font-black text-xs uppercase tracking-wider rounded-xl transition shadow-lg shadow-amber-500/20 cursor-pointer active:scale-95"
               >
-                Track Order Live
+                Track Order Live / Status Dekhein ➔
               </button>
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
         </div>
       )}
     </div>
@@ -977,17 +1304,13 @@ function OrderTrackerView() {
 
   // Poll Orders from Firestore and matches local Storage ID list
   useEffect(() => {
-    import('../lib/firebase').then(({ subscribeToOrders }) => {
-      const unsub = subscribeToOrders((allOrders) => {
-        // Filter those matched with current user's local Order IDs
-        const matched = allOrders.filter(o => 
-          JSON.parse(localStorage.getItem('dadu247_order_ids') || '[]').includes(o.id)
-        );
-        setSyncedOrders(matched);
-        setLoading(false);
-      });
-      return () => unsub();
+    const unsub = subscribeToOrders((allOrders) => {
+      const ids = JSON.parse(localStorage.getItem('dadu247_order_ids') || '[]');
+      const matched = allOrders.filter(o => ids.includes(o.id));
+      setSyncedOrders(matched);
+      setLoading(false);
     });
+    return unsub;
   }, []);
 
   const getStatusColor = (status: Order['status']) => {

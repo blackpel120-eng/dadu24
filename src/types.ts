@@ -28,6 +28,15 @@ export interface OrderItem {
 
 export type OrderStatus = 'Pending' | 'Accepted' | 'Preparing' | 'Out for Delivery' | 'Completed' | 'Cancelled';
 
+export interface RegisteredUser {
+  id: string; // The phone number or a unique ID
+  customerName: string;
+  phoneNumber: string;
+  deliveryAddress: string;
+  nearestLandmark?: string;
+  createdAt: string;
+}
+
 export interface Order {
   id: string;
   customerName: string;

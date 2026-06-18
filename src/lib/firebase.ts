@@ -22,10 +22,26 @@ import {
   onAuthStateChanged
 } from 'firebase/auth';
 import firebaseConfig from '@/firebase-applet-config.json';
-import { FoodItem, ElectricianService, Order } from '../types';
+import { FoodItem, ElectricianService, Order, RegisteredUser } from '../types';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || (firebaseConfig as any).databaseId);
+
+// Resilient Firestore initialization
+function initializeFirestoreDb() {
+  try {
+    const dbId = firebaseConfig.firestoreDatabaseId || (firebaseConfig as any).databaseId;
+    if (dbId) {
+      console.log("Firebase: Initializing Firestore with custom database ID:", dbId);
+      return getFirestore(app, dbId);
+    }
+  } catch (err) {
+    console.warn("Firebase: Failed to initialize custom Firestore database ID, falling back to default (default):", err);
+  }
+  console.log("Firebase: Initializing default Firestore database");
+  return getFirestore(app);
+}
+
+export const db = initializeFirestoreDb();
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -198,11 +214,13 @@ export async function seedDatabaseIfEmpty() {
     try {
       foodSnap = await getDocs(collection(db, FOOD_COLLECTION));
     } catch (err) {
-      handleFirestoreError(err, OperationType.GET, FOOD_COLLECTION);
+      console.warn("Firebase Seeding: Could not check food items, might be offline or empty. Initing seed.", err);
+      // Construct a fake empty snapshot to trigger seeding
+      foodSnap = { empty: true };
     }
 
     if (foodSnap.empty) {
-      console.log('Seeding initial food items in Firestore...');
+      console.log('Seeding initial food items in Firestore Resiliently...');
       const batch = writeBatch(db);
       PRESET_FOODS.forEach((food) => {
         const docRef = doc(collection(db, FOOD_COLLECTION));
@@ -210,8 +228,9 @@ export async function seedDatabaseIfEmpty() {
       });
       try {
         await batch.commit();
+        console.log('Seeding of food items completed successfully!');
       } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, FOOD_COLLECTION);
+        console.error("Firebase Seeding Error committing food batch: ", err);
       }
     }
 
@@ -220,11 +239,12 @@ export async function seedDatabaseIfEmpty() {
     try {
       serviceSnap = await getDocs(collection(db, SERVICE_COLLECTION));
     } catch (err) {
-      handleFirestoreError(err, OperationType.GET, SERVICE_COLLECTION);
+      console.warn("Firebase Seeding: Could not check electrician services, might be offline or empty. Initing seed.", err);
+      serviceSnap = { empty: true };
     }
 
     if (serviceSnap.empty) {
-      console.log('Seeding initial electrician services in Firestore...');
+      console.log('Seeding initial electrician services in Firestore Resiliently...');
       const batch = writeBatch(db);
       PRESET_SERVICES.forEach((service) => {
         const docRef = doc(collection(db, SERVICE_COLLECTION));
@@ -232,13 +252,13 @@ export async function seedDatabaseIfEmpty() {
       });
       try {
         await batch.commit();
+        console.log('Seeding of electrician services completed successfully!');
       } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, SERVICE_COLLECTION);
+        console.error("Firebase Seeding Error committing services batch: ", err);
       }
     }
   } catch (err) {
-    console.error('Error during Firestore database seeding: ', err);
-    throw err;
+    console.error('Error during Firestore database seeding (will proceed anyway): ', err);
   }
 }
 
@@ -353,7 +373,7 @@ export function subscribeToOrders(callback: (orders: Order[]) => void) {
     });
     callback(orders);
   }, (err) => {
-    handleFirestoreError(err, OperationType.GET, ORDER_COLLECTION);
+    console.error("Firestore Subscribe Orders Error: ", err);
   });
 }
 
@@ -368,7 +388,7 @@ export function subscribeToFoods(callback: (foods: FoodItem[]) => void) {
     });
     callback(foods);
   }, (err) => {
-    handleFirestoreError(err, OperationType.GET, FOOD_COLLECTION);
+    console.error("Firestore Subscribe Foods Error: ", err);
   });
 }
 
@@ -383,6 +403,77 @@ export function subscribeToServices(callback: (services: ElectricianService[]) =
     });
     callback(services);
   }, (err) => {
-    handleFirestoreError(err, OperationType.GET, SERVICE_COLLECTION);
+    console.error("Firestore Subscribe Services Error: ", err);
   });
 }
+
+// REGISTERED USER HELPERS
+export const USERS_COLLECTION = 'registered_users';
+
+export async function saveRegisteredUser(user: { customerName: string; phoneNumber: string; deliveryAddress: string; nearestLandmark?: string }) {
+  try {
+    const cleanPhone = user.phoneNumber.replace(/\D/g, ''); // Uniquely key by numeric digits of the phone number
+    if (!cleanPhone) throw new Error("A valid phone number is required to register.");
+    
+    const docRef = doc(db, USERS_COLLECTION, cleanPhone);
+    const docSnap = await getDoc(docRef);
+    
+    const userData = {
+      customerName: user.customerName,
+      phoneNumber: user.phoneNumber,
+      deliveryAddress: user.deliveryAddress,
+      nearestLandmark: user.nearestLandmark || '',
+      createdAt: docSnap.exists() ? (docSnap.data().createdAt || new Date().toISOString()) : new Date().toISOString(),
+    };
+    
+    await setDoc(docRef, userData, { merge: true });
+    return cleanPhone;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, USERS_COLLECTION);
+  }
+}
+
+export function subscribeToRegisteredUsers(callback: (users: RegisteredUser[]) => void) {
+  return onSnapshot(collection(db, USERS_COLLECTION), (snapshot) => {
+    const users: RegisteredUser[] = [];
+    snapshot.forEach((doc) => {
+      users.push({
+        id: doc.id,
+        ...doc.data()
+      } as RegisteredUser);
+    });
+    // Sort chronologically (newest registered readers first)
+    users.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    callback(users);
+  }, (err) => {
+    console.error("Firestore Subscribe Users Error: ", err);
+  });
+}
+
+// SETTINGS CRUD HELPERS
+export const SETTINGS_COLLECTION = 'settings';
+
+export async function updateDeliveryFee(amount: number): Promise<void> {
+  try {
+    const docRef = doc(db, SETTINGS_COLLECTION, 'delivery');
+    await setDoc(docRef, { amount });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${SETTINGS_COLLECTION}/delivery`);
+  }
+}
+
+export function subscribeToDeliveryFee(callback: (amount: number) => void) {
+  return onSnapshot(doc(db, SETTINGS_COLLECTION, 'delivery'), (snapshot) => {
+    if (snapshot.exists()) {
+      callback(snapshot.data().amount ?? 60);
+    } else {
+      // Create with default 60
+      setDoc(doc(db, SETTINGS_COLLECTION, 'delivery'), { amount: 60 }).catch(console.error);
+      callback(60);
+    }
+  }, (err) => {
+    console.error("Firestore Subscribe Delivery Fee Error: ", err);
+    callback(60); // fallback
+  });
+}
+
